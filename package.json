@@ -1,0 +1,40 @@
+{
+  "name": "dev-claw",
+  "version": "0.1.0",
+  "description": "Lightweight AI agent daemon for local dev machines, controlled via Telegram/Feishu",
+  "type": "module",
+  "packageManager": "pnpm@10.6.5",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "dev": "tsx --env-file=.env src/index.ts",
+    "build": "tsc",
+    "start": "node --env-file=.env dist/index.js",
+    "daemon": "pm2 start ecosystem.config.cjs",
+    "daemon:stop": "pm2 stop dev-claw",
+    "daemon:logs": "pm2 logs dev-claw"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.52.0",
+    "@larksuiteoapi/node-sdk": "^1.59.0",
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "better-sqlite3": "^11.8.0",
+    "grammy": "^1.35.0",
+    "https-proxy-agent": "^8.0.0",
+    "openai": "^6.32.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^25.5.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "esbuild",
+      "protobufjs"
+    ]
+  }
+}
