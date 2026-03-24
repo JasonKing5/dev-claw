@@ -1,217 +1,61 @@
-# DevClaw
+# DevClaw Project Guidelines
 
-Lightweight AI agent daemon for local dev machines, controlled remotely via Telegram or Feishu (Lark).
+Hello! You are an expert Node.js/TypeScript architect helping me build **DevClaw**.
+DevClaw is an autonomous, headless coding agent daemon that runs on my local Mac, controlled remotely via Telegram/Feishu, and driven by Claude 4.5/4.6 + MCP ecosystem.
 
-> Zero inbound connections. Zero custom plugins. 100% MCP native.
+**CRITICAL DOCS TO READ FIRST:**
+- Requirements: `cat docs/PRD.md`
+- Architecture & The Loop: `cat docs/ARCHITECTURE.md`
 
-## Features
+## ⛔ Strict Anti-Patterns (DO NOT DO THIS)
+1. **NO Webhooks**: Do NOT write Express/Koa servers for IM. Use `grammY` long-polling for Telegram and `@larksuiteoapi/node-sdk` WSClient for Feishu. We must bypass NAT entirely using outbound connections.
+2. **NO Custom Plugin Systems**: Do NOT write custom code to execute shell commands or read files. DevClaw is an MCP Client. We MUST parse the user's existing `~/.claude.json` config and connect to those existing MCP servers via `StdioClientTransport`.
+3. **NO Single-Turn Logic**: Do NOT treat this as a simple Chatbot. The core engine MUST be an `Agentic Loop` (a `while` loop that keeps feeding `tool_result` back to Claude until `stop_reason` is not `tool_use`).
 
-- **Zero Inbound Network** — Uses long-polling (Telegram) and WebSocket (Feishu) only. No webhooks, no ngrok, no public IP required. Just `pnpm dev` and go.
-- **MCP Native** — All local actions (file editing, DB queries, Git operations) are delegated to standard [MCP Servers](https://modelcontextprotocol.io). Reuse the same servers you already run with Claude Code or Cursor.
-- **Low Token Footprint** — SQLite sliding-window memory replaces megaprompts. Only the last N messages are sent to the model.
-- **Dual Model Routing** — Claude Sonnet 4.5 for daily fast responses, Claude Opus 4.6 for deep reasoning (triggered via `/opus` command).
-- **User Whitelist** — Only allowed user IDs can interact with the bot. Your local machine stays safe.
+## 🛠️ Key Architectural Patterns
+1. **Human-in-the-Loop (Interactive Approval)**: 
+   When writing the Tool Executor, implement a Promise-based suspension mechanism. If a high-risk MCP tool (like executing a bash command) is called, the loop must PAUSE, send a button-card to Telegram/Feishu, and WAIT for the user's callback query to resolve or reject the Promise before executing the tool.
+2. **Token Economy**:
+   Use `better-sqlite3` to store message history. The `SessionManager` should only fetch the last N messages (Sliding Window) to feed into the Anthropic API to avoid context bloat.
 
-## Architecture
+## 🚀 Recommended Tech Stack
+- Typescript (ESM), `tsx` for execution.
+- `@anthropic-ai/sdk`, `@modelcontextprotocol/sdk`, `grammY`, `better-sqlite3`.
+- For TG in mainland China, ensure `https-proxy-agent` support is configurable via `.env`.
 
-```
-  Telegram / Feishu App (mobile)
-             |
-    (outbound long connection)
-             |
-  +----------v-----------+
-  |   Gateway Layer       |  grammY (TG) / Lark WS Client (Feishu)
-  +----------+-----------+
-             | unified Message
-  +----------v-----------+
-  |   Core Engine         |  Auth Guard + SQLite Session Manager
-  +----------+-----------+
-             |
-  +----------v-----------+
-  |   AI Routing Layer    |  @anthropic-ai/sdk (Claude)
-  +----------+-----------+
-             |
-  +----------v-----------+
-  |   MCP Execution Layer |  @modelcontextprotocol/sdk Client
-  +----+------------+----+
-       |            |
-  [FS MCP]    [Postgres MCP]   ... (any MCP server)
-```
+When implementing a feature, think about the "Asynchronous Co-worker" mindset. The code should be robust, handle errors gracefully within the Agentic Loop (feed errors back to Claude so it can self-correct), and minimize blocking the main thread.
 
-## Prerequisites
+## MCP Server Configuration
 
-- **Node.js** >= 20.0.0
-- **pnpm** (recommended) — `npm install -g pnpm`
+DevClaw gains its capabilities (file operations, shell access, browser control, etc.) by connecting to **stdio MCP servers** — the same ones used by Claude Code and Cursor.
 
-## Quick Start
+### Config Priority
+1. **Project-local**: `.devclaw/mcp_config.json` (highest priority)
+2. **Global**: `~/.claude.json` → `mcpServers` section (auto-inherited from Claude Code)
 
-### 1. Install
+If neither exists, DevClaw starts with no tools (pure chat mode).
 
-```bash
-git clone https://github.com/your-username/dev-claw.git
-cd dev-claw
-pnpm install
-```
+> **Note**: Only `stdio` transport servers are supported. HTTP/SSE servers in `~/.claude.json` are automatically skipped with a warning.
 
-### 2. Configure
-
-Copy the example env file:
-
-```bash
-cp .env.example .env
-```
-
-You only need to fill in **3 fields** to get started. Pick your IM platform:
-
-<details>
-<summary><b>Option A: Telegram only</b></summary>
-
-```env
-# Get a token from @BotFather on Telegram
-TG_BOT_TOKEN=123456:ABC-DEF...
-
-# Your Telegram numeric user ID (send /start to @userinfobot to find it)
-ALLOWED_USERS=123456789
-
-# Anthropic API key (https://console.anthropic.com)
-ANTHROPIC_API_KEY=sk-ant-...
-```
-
-</details>
-
-<details>
-<summary><b>Option B: Feishu (Lark) only</b></summary>
-
-```env
-# Create an app at https://open.feishu.cn and enable "Receive events via WebSocket"
-FEISHU_APP_ID=cli_xxxxx
-FEISHU_APP_SECRET=xxxxx
-
-# Your Feishu open_id
-ALLOWED_USERS=ou_xxxxx
-
-# Anthropic API key (https://console.anthropic.com)
-ANTHROPIC_API_KEY=sk-ant-...
-```
-
-</details>
-
-### 3. Run
-
-```bash
-pnpm dev
-```
-
-That's it. Send a message to your bot and get a response from Claude.
-
-## Full Configuration
-
-All configuration is done via environment variables in `.env`:
-
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `TG_BOT_TOKEN` | No* | — | Telegram bot token from @BotFather |
-| `TG_PROXY_URL` | No | — | HTTP proxy for Telegram API (e.g. `http://127.0.0.1:7890`) |
-| `FEISHU_APP_ID` | No* | — | Feishu app ID |
-| `FEISHU_APP_SECRET` | No* | — | Feishu app secret |
-| `ALLOWED_USERS` | Yes | — | Comma-separated list of allowed user IDs |
-| `AI_PROVIDER` | No | `anthropic` | SDK format: `anthropic` (native) or `openai` (LiteLLM, OpenRouter, etc.) |
-| `ANTHROPIC_API_KEY` | Yes | — | API key (works for both providers) |
-| `ANTHROPIC_BASE_URL` | No | — | API base URL for third-party proxies |
-| `CLAUDE_MODEL` | No | `claude-sonnet-4-5-20250514` | Default model for daily use |
-| `CLAUDE_DEEP_MODEL` | No | `claude-opus-4-6-20250925` | Deep reasoning model (used with `/opus`) |
-| `DB_PATH` | No | `.devclaw/memory.db` | SQLite database file path |
-| `CONTEXT_WINDOW` | No | `10` | Number of recent messages to include in context |
-
-> \* At least one IM platform (Telegram or Feishu) must be configured.
-
-### Using a Third-Party API Proxy
-
-If you're using an OpenAI-compatible proxy (LiteLLM, OpenRouter, etc.), set `AI_PROVIDER=openai` and point `ANTHROPIC_BASE_URL` to your proxy:
-
-```env
-AI_PROVIDER=openai
-ANTHROPIC_BASE_URL=http://localhost:4000/v1
-ANTHROPIC_API_KEY=your-proxy-key
-```
-
-For Anthropic-compatible proxies, keep the default `AI_PROVIDER=anthropic` and just set `ANTHROPIC_BASE_URL`.
-
-## MCP Configuration
-
-DevClaw reads MCP server definitions from `.devclaw/mcp_config.json`. This file maps server names to the commands used to launch them:
-
+### Example `.devclaw/mcp_config.json`
 ```json
 {
   "filesystem": {
     "command": "npx",
-    "args": ["-y", "@modelcontextprotocol/server-filesystem", "/Users/me/projects"]
+    "args": ["-y", "@modelcontextprotocol/server-filesystem", "/Users/you/projects"]
   },
-  "postgres": {
+  "playwright": {
     "command": "npx",
-    "args": ["-y", "@modelcontextprotocol/server-postgres"],
-    "env": {
-      "DATABASE_URL": "postgresql://localhost:5432/mydb"
-    }
+    "args": ["-y", "@playwright/mcp@latest"]
   }
 }
 ```
 
-Each server is connected via stdio at startup. You can use any MCP-compatible server — the same ones that work with Claude Code, Cursor, or any MCP client.
+### Recommended MCP Servers
 
-## Bot Commands
-
-| Command | Description |
-|---|---|
-| `/clear` | Clear conversation history for the current user |
-| `/opus <message>` | Send a message using the deep reasoning model (Opus) |
-
-Any other text is sent to the default model (Sonnet).
-
-## Production Deployment
-
-### Build and run with Node.js
-
-```bash
-pnpm build
-pnpm start
-```
-
-### Run as a background daemon (pm2)
-
-```bash
-# Install pm2 globally if you haven't
-npm install -g pm2
-
-# Start the daemon
-pnpm daemon
-
-# View logs
-pnpm daemon:logs
-
-# Stop
-pnpm daemon:stop
-```
-
-## Project Structure
-
-```
-src/
-  index.ts              # Entry point — boots all layers, wires message flow
-  config.ts             # Reads .env + .devclaw/mcp_config.json
-  types.ts              # Shared interfaces (Message, ChatMessage, AppConfig)
-  gateway/
-    telegram.ts         # grammY long-polling adapter
-    feishu.ts           # Feishu/Lark WebSocket adapter
-  core/
-    auth.ts             # User whitelist guard
-    session.ts          # SQLite session manager (sliding window)
-  ai/
-    claude.ts           # Anthropic SDK client with model routing
-  mcp/
-    client.ts           # MCP client manager (stdio transport)
-```
-
-## License
-
-[MIT](LICENSE)
+| Capability | Package | Description |
+| :--- | :--- | :--- |
+| File System | `@modelcontextprotocol/server-filesystem` | Read/write/search local files |
+| Browser | `@playwright/mcp` | Automate browser interactions |
+| PostgreSQL | `@modelcontextprotocol/server-postgres` | Query databases |
+| GitHub | `@modelcontextprotocol/server-github` | Manage repos, PRs, issues |

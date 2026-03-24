@@ -3,11 +3,13 @@ import { dirname } from "node:path";
 import { loadConfig } from "./config.js";
 import { initDatabase, addMessage, getRecentMessages, clearHistory } from "./core/session.js";
 import { isAllowed } from "./core/auth.js";
-import { initClaude, chat } from "./ai/claude.js";
-import { initMcpClients } from "./mcp/client.js";
-import { createTelegramBot } from "./gateway/telegram.js";
-import { startFeishuClient } from "./gateway/feishu.js";
-import type { Message } from "./types.js";
+import { isHighRisk, requestApproval } from "./core/approval.js";
+import { initClaude, agenticLoop } from "./ai/claude.js";
+import { initMcpClients, getToolsForApi, getSystemPrompt, callTool } from "./mcp/client.js";
+import { createTelegramBot, sendTelegramApprovalCard } from "./gateway/telegram.js";
+import { startFeishuClient, sendFeishuApprovalCard } from "./gateway/feishu.js";
+import type { Bot } from "grammy";
+import type { Message, ToolCall } from "./types.js";
 
 async function main() {
   const config = loadConfig();
@@ -19,6 +21,9 @@ async function main() {
   await initMcpClients(config);
 
   console.log("[DevClaw] Core engine initialized");
+
+  // Keep reference to TG bot for sending approval cards
+  let tgBot: Bot | undefined;
 
   // Unified message handler
   async function handleMessage(msg: Message) {
@@ -43,8 +48,39 @@ async function main() {
 
       addMessage(msg.userId, "user", text);
       const history = getRecentMessages(msg.userId, config.contextWindow);
+      const tools = getToolsForApi();
 
-      const reply = await chat(history, model);
+      // Build tool executor with approval gate
+      const executeTool = async (tool: ToolCall): Promise<string> => {
+        if (isHighRisk(tool.name, config.approvalRules)) {
+          const sendCard = async (chatId: string, approvalId: string, toolName: string, toolInput: Record<string, unknown>) => {
+            if (msg.platform === "telegram" && tgBot) {
+              await sendTelegramApprovalCard(tgBot, chatId, approvalId, toolName, toolInput);
+            } else if (msg.platform === "feishu") {
+              await sendFeishuApprovalCard(chatId, approvalId, toolName, toolInput);
+            }
+          };
+
+          const approved = await requestApproval(msg.userId, msg.chatId, tool.name, tool.input, sendCard);
+          if (!approved) {
+            return "Tool execution was rejected by the user.";
+          }
+        }
+
+        return callTool(tool.name, tool.input);
+      };
+
+      const reply = await agenticLoop({
+        history,
+        model,
+        tools,
+        systemPrompt: getSystemPrompt(),
+        executeTool,
+        onStatus: async (status) => {
+          await msg.reply(status).catch(() => {});
+        },
+      });
+
       addMessage(msg.userId, "assistant", reply);
       await msg.reply(reply);
     } catch (err) {
@@ -55,11 +91,11 @@ async function main() {
 
   // Start gateways
   if (config.tgBotToken) {
-    const bot = createTelegramBot(config, handleMessage);
-    bot.catch((err) => {
+    tgBot = createTelegramBot(config, handleMessage);
+    tgBot.catch((err) => {
       console.error("[Gateway] Telegram bot error:", err);
     });
-    bot.start({
+    tgBot.start({
       onStart: () => console.log("[Gateway] Telegram bot started (long-polling)"),
     });
   }

@@ -17,6 +17,39 @@ export interface ChatMessage {
   content: string;
 }
 
+/** A tool_use block extracted from Claude's response */
+export interface ToolCall {
+  id: string;
+  name: string;
+  input: Record<string, unknown>;
+}
+
+/** Result of executing a tool, fed back to Claude */
+export interface ToolResult {
+  type: "tool_result";
+  tool_use_id: string;
+  content: string;
+  is_error?: boolean;
+}
+
+/** Approval rule configuration */
+export interface ApprovalRules {
+  /** blacklist = listed patterns need approval; whitelist = only listed patterns are auto-approved */
+  mode: "blacklist" | "whitelist";
+  /** Tool name patterns (supports simple glob: * matches any chars) */
+  patterns: string[];
+}
+
+/** Pending approval request in the queue */
+export interface ApprovalRequest {
+  id: string;
+  userId: string;
+  chatId: string;
+  toolName: string;
+  toolInput: Record<string, unknown>;
+  resolve: (approved: boolean) => void;
+}
+
 /** MCP server definition from .devclaw/mcp_config.json */
 export interface McpServerConfig {
   command: string;
@@ -45,4 +78,6 @@ export interface AppConfig {
   contextWindow: number;
   // MCP
   mcpServers: Record<string, McpServerConfig>;
+  // Approval
+  approvalRules: ApprovalRules;
 }

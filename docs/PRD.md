@@ -1,50 +1,33 @@
 # DevClaw 产品需求文档 (PRD)
 
-## 1. 项目背景与定位
-**DevClaw** 是一款专为 Web 全栈开发者量身定制的极简、轻量级本地 AI Agent 接入网关。
-面对开源社区日益臃肿的 OpenClaw 等衍生项目，本项目旨在剥离一切非必要功能（如复杂的跨平台路由、私有化黑盒插件系统），专注于构建一个**低 Token 消耗、零内网穿透成本、100% 拥抱原生 MCP (Model Context Protocol) 生态**的极客级私人助理。
+## 1. 项目概述与定位
+**DevClaw** 是一款为 Web 全栈开发者打造的“无头（Headless）自治开发特工”。
+它 100% 复用开发者本地机器上现有的 Claude Code / Cursor 的 MCP（Model Context Protocol）配置，并通过 Telegram/飞书 提供长链接的远程访问能力。
 
-核心驱动引擎将全面适配 2026 年最新一代大模型（如 `Claude Sonnet 4.5` 作为日常极速引擎，`Claude Opus 4.6` 作为深度逻辑引擎），并通过即时通讯工具（Telegram/飞书）为开发者提供全天候的移动端与桌面端支持。
+**核心定位**：
+- **在工位（PC 端）**：作为开发者的“异步多线程外包同事”。接管耗时、遍历性任务（如全局重构、跑测试、打点翻译），不阻塞终端，完成后通过 IM 通知。
+- **在通勤/外地（移动端）**：作为“移动端项目驾驶舱”。利用手机的自然语言（语音/文本）直达本地开发环境，配合结构化卡片审批高危操作，彻底替代痛苦的手机 SSH 命令行交互。
 
-## 2. 核心痛点与重构方案
+## 2. 核心痛点与解决方案
+1. **痛点：终端单线程阻塞 & 必须盯盘**
+   - **方案**：引入 `Agentic Loop (自治循环)`。大模型在遇到 `tool_use` 时，网关在后台静默执行并自动将结果喂回模型，循环直至任务完毕。
+2. **痛点：高危操作缺乏移动端安全感**
+   - **方案**：引入 `Human-in-the-Loop (人工审批流)`。遇到 `npm install`, `rm -rf`, `git push` 等写操作时，暂停 Agentic Loop，向 TG/飞书 发送审批卡片（[允许]/[拒绝]按钮）。
+3. **痛点：两套 MCP 配置维护成本高**
+   - **方案**：`Single Source of Truth`。DevClaw 启动时自动读取本地 `~/.claude.json` 配置，动态挂载已有的 MCP Servers，实现技能 100% 同步。
+4. **痛点：移动端无法预览开发效果**
+   - **方案**：集成 `Cloudflare Tunnel`。AI 完成前端代码修改并启动服务后，自动暴露本地端口，并将临时公网 HTTPS 预览链接推送到手机。
 
-### 痛点一：传统框架 Token 消耗过大（冗余上下文）
-- **问题描述**：传统的 Claw 框架采用 "Megaprompt" 和文件堆砌记忆，每次请求强行灌入所有 Agent Skills 声明和全局历史，导致在 Claude 4.5/4.6 等拥有复杂 System Prompt 的模型上 Token 消耗极快，响应延迟高。
-- **DevClaw 方案**：
-  1. **滑动窗口记忆流**：引入 SQLite 替代 Markdown 文件作为记忆载体，基于 Token 估算自动提取最近 N 轮对话。
-  2. **动态 MCP 挂载 (Lazy Tool Loading)**：废除全局工具挂载。利用轻量级模型（如 `Claude Haiku 4.5`）前置进行意图识别，仅在涉及本地文件、数据库查询等极客操作时，动态透传对应的 MCP Servers Schema。
-
-### 痛点二：IM 接入配置极其繁琐（环境门槛高）
-- **问题描述**：为兼容 Webhook，传统方案强制要求配置 ngrok / Tailscale Funnel 等内网穿透工具，且飞书等企业应用鉴权链路极长，导致本地开发和日常启停极其痛苦。
-- **DevClaw 方案**：
-  1. **彻底废除 Webhook**。
-  2. **Telegram**：采用 `grammY` 长轮询（Long-Polling）机制。
-  3. **飞书 (Feishu)**：全面采用官方支持的 **WebSocket** 长链接模式。
-  - **结果**：实现真正的“开箱即用”，在任何无公网 IP 的 Mac/PC 上，只需 `npm start` 即可秒连。
-
-### 痛点三：功能过度臃肿与黑盒插件安全隐患
-- **问题描述**：内置了大量开发者根本不需要的泛娱乐功能（如语音、画图），且自定义的 Skill 系统难以维护，甚至存在任意代码执行的风险。
-- **DevClaw 方案**：
-  1. **100% MCP 原生**：干掉所有的私有插件库。所有的工具能力（操作 Git、查询 DB、读取本地 Log、甚至触发构建脚本）完全复用开发者为 `claude-code` 或 `Cursor` 编写的标准本地 MCP Servers。
-  2. **边界清晰**：DevClaw 仅承担“消息管道”、“状态机”和“LLM 调度”职责，底层动作一律交给 MCP Client 执行。
-
-## 3. 核心功能点 (P0)
+## 3. 核心功能需求 (P0)
 
 | 模块 | 功能项 | 详细描述 |
 | :--- | :--- | :--- |
-| **消息网关** | Telegram 接入 | 支持接收与回复文本、Markdown 格式消息，支持基础命令 `/start`, `/clear` (清空记忆)。 |
-| **消息网关** | 飞书 接入 | 基于 WebSocket 接收特定群聊或单聊消息，支持回复富文本卡片或 Markdown。 |
-| **会话管理** | 本地状态持久化 | 基于 `better-sqlite3` 记录 `user_id`, `role`, `content`, `timestamp`。 |
-| **LLM 调度** | 动态模型切换 | 支持环境变量级配置，常规聊天路由至 `claude-sonnet-4-5`，复杂代码诊断可通过 `/opus` 指令触发 `claude-opus-4-6`。 |
-| **MCP 引擎** | MCP Client 连接 | 启动时自动读取本地 `.devclaw/mcp_config.json`，与本地已有的各种 MCP 进程（如 `@modelcontextprotocol/server-postgres`）建立标准 stdio/sse 连接。 |
-| **MCP 引擎** | Tool Call 拦截 | 解析大模型返回的 `tool_use` 节点，转发至对应的 MCP Server，将 `tool_result` 喂回给大模型。 |
+| **消息网关** | 无公网穿透接入 | Telegram 使用 `grammY` 长轮询；飞书使用官方 `WebSocket`。确保在家庭/公司大内网环境下稳定穿透。 |
+| **引擎核心** | Agentic Loop 机制 | 支持 `while(stop_reason === 'tool_use')` 循环逻辑，实现大模型连续多步思考与执行。 |
+| **状态控制** | 移动端异步审批 | 拦截特定 MCP Tool Call，触发 IM 交互卡片，通过 Promise 挂起当前流程，等待用户通过点击手机按钮后释放。 |
+| **生态复用** | Claude Code 技能继承 | 解析标准 `.claude.json`，通过 `StdioClientTransport` 启动并复用系统已有的所有 MCP 工具链。 |
+| **会话记忆** | 滑动窗口持久化 | 摒弃 Megaprompt。基于 `better-sqlite3` 存储多轮对话，动态裁剪 Context，极度压缩 Claude 4.5/4.6 的 Token 消耗。 |
 
-## 4. 非功能性与安全需求
-1. **轻量化**：核心代码库控制在 1000 行以内，极简的依赖树。
-2. **极速启动**：Node.js 环境下启动时间 < 2 秒。
-3. **权限沙箱**：通过读取 `.env` 中定义的 `ALLOWED_USERS` (TG/Feishu ID 列表) 进行白名单鉴权，拒绝任何陌生人的调用，防止本地环境被破坏。
-4. **日志脱敏**：控制台日志仅打印请求耗时、Token 使用量及 Tool Call 名称，禁止在日志中明文打印私钥及数据库查询结果。
-
-## 5. 预期用户场景 (User Story)
-- **场景 A (查库)**：晚上在外就餐，收到监控报警。通过 TG 发送：“*用 DB MCP 查一下刚刚 orders 表里报错的堆栈*”。DevClaw 调用 `claude-sonnet-4.5` 和本地 DB MCP 查出结果并脱敏发回 TG。
-- **场景 B (改代码)**：在地铁上，通过飞书向 DevClaw 发送：“*将 src/utils/auth.ts 里的 JWT 过期时间从 7 天改为 30 天*”。DevClaw 调动本地 FileSystem MCP 完成修改，并可联动 Git MCP 提交 PR。
+## 4. 典型用户故事 (User Story)
+- **场景 A（工位多线程并发）**：开发者正在用 VSCode 攻克核心算法。通过 Mac 上的微信/飞书对 DevClaw 发送：“*去把 `src/utils` 下所有旧版 API 调用替换为新版并补充单元测试。*” DevClaw 在后台静默执行并反复跑测试，完成后“叮”一声推送结果，开发者精力零分散。
+- **场景 B（通勤突发处理）**：开发者在地铁上收到线上报错。通过 TG 语音发送：“*调取昨天发布的 DB Schema，查一下 users 表的死锁。*” 收到分析后，发送：“*修改对应的 SQL 并提交一个 hotfix PR。*” DevClaw 随后发来 PR 链接，开发者在手机点击合并。
